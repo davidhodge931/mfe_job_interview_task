@@ -1,1 +1,3 @@
-# mfe_job_interview_task
+Task for MfE job interview
+
+Role: Senior Analyst, GHG modelling and reporting
