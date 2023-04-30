@@ -1,0 +1,157 @@
+---
+title: "MfE Job Interview Task (David Hodge)"
+output: pdf_document
+---
+1. 
+
+```{r, echo=FALSE, message=FALSE, warning=F, fig.height=4}
+library(tidyverse)
+library(readxl)
+library(purrr)
+library(ggblanket)
+
+get_ghg <- function(x) {
+  read_excel("data/Scenarios-dataset-2021-final-advice.xlsx", x) |>
+    select(-c(3, 4)) |>
+    fill(1:2) |>
+    rename(cat1 = x, cat2 = ...2, cat3 = ...5) |>
+    filter(!is.na(cat3)) |>
+    group_by(cat1, cat2, cat3) |>
+    tidyr::pivot_longer(
+      cols = `1990`:`2050`,
+      names_to = "year",
+      values_to = "ktco2e") |>
+    mutate(across(year, \(x) ymd(paste0(x, "0101")))) |>
+    mutate(cat0 = x) |>
+    select(cat0, everything()) |>
+    ungroup()
+}
+
+scenarios <- excel_sheets("data/Scenarios-dataset-2021-final-advice.xlsx")[3:10]
+
+ghg <- map(scenarios, get_ghg) |>
+  purrr::list_rbind()
+
+#question1
+scenarios1 <-
+  c("Demonstration path",
+    "Headwinds",
+    "Tailwinds",
+    "Current Policy Reference")
+
+ghg |>
+  filter(
+    cat0 %in% scenarios1,
+    cat1 == "Summary of emissions",
+    cat2 == "Summary emissions by GHG Inventory classification (ktCO2e)",
+    cat3 == "Net") |>
+  filter(between(year, ymd("2020-01-01"), ymd("2050-01-01"))) |>
+  mutate(cat0 = factor(cat0, scenarios)) |>
+  gg_line(
+    x = year,
+    y = ktco2e,
+    col = cat0,
+    y_include = 0,
+    y_title = "Net emissions (kt CO\u2082e)",
+    col_title = "Scenerio",
+    title = "Climate Commission modelled net emissions under different scenarios, 2020\u20132050",
+    col_legend_ncol = 2,
+    pal = pal_default(5)[c(2, 3, 4, 1)],
+    size = 1,
+    y_breaks = scales::breaks_width(10000))
+```
+
+
+2. 
+```{r, echo=FALSE, message=FALSE, warning=F}
+scenarios2 <-
+  c("Demonstration path",
+    "Current Policy Reference")
+
+emissions_change <- ghg |>
+  filter(
+    cat0 %in% scenarios2,
+    cat1 == "Summary of emissions",
+    cat2 == "Summary biogenic CH4 by GHG Inventory classification (ktCO2e)",
+    cat3 == "Net") |>
+  filter(between(year, ymd("2022-01-01"), ymd("2025-01-01"))) |>
+  group_by(cat0) |>
+  summarise(across(ktco2e, sum)) |>
+  pivot_wider(names_from = cat0,
+              values_from = ktco2e,
+              names_repair = snakecase::to_snake_case) |>
+  mutate(emissions_change = demonstration_path - current_policy_reference) |> 
+  pull(emissions_change) |> 
+  round(1)
+```
+
+Biogenic methane emissions are reduced by `r abs(emissions_change)` ktCO2e over the 1st emissions budget period (i.e. 2022-2025) compared to the Current Policy Reference scenario.
+
+3. 
+
+Current Policy Scenario with project reductions and subsequent emissions in the 1st emissions budget period (2022-2025):
+
+```{r, echo=FALSE, message=FALSE, warning=F}
+#question 3
+project_cpr <- ghg |>
+  filter(
+    cat0 %in% "Current Policy Reference",
+    cat1 == "Waste",
+    cat2 == "Waste emissions by gas (ktCO2e)",
+    cat3 == "CH4") |>
+  filter(between(year, ymd("2022-01-01"), ymd("2030-01-01")))
+
+#30% emissions reduction in 2030
+reduction_2030 <- project_cpr |>
+  filter(year == ymd("2024-01-01")) |>
+  pull(ktco2e) * -0.33
+
+#emissions reduction in 2024 to allow for doubling each year until 2030 value
+
+# x * 2 ^ 6 = 967
+reduction_2024 <- reduction_2030 / 2 ^ 6
+
+#emissions reductions by year between 2022 and 2030
+reductions <- c(
+  0,
+  0,
+  reduction_2024,
+  reduction_2024 * 2,
+  reduction_2024 * 2 ^ 2,
+  reduction_2024 * 2 ^ 3,
+  reduction_2024 * 2 ^ 4,
+  reduction_2024 * 2 ^ 5,
+  reduction_2024 * 2 ^ 6)
+
+#project reductions and emissions in the 1st commitment period (2022-2025)
+project_cpr |>
+  add_column(reductions) |>
+  mutate(ktco2e_new = ktco2e + reductions) |>
+  filter(between(year, ymd("2022-01-01"), ymd("2025-01-01"))) |>
+  summarise(across(c(reductions, ktco2e_new), sum)) |>
+  rename(reductions_ar4 = reductions,
+         emissions_ar4 = ktco2e_new) |>
+  mutate(reductions_ar5 = reductions_ar4 / 25 * 28,
+         emissions_ar5 = emissions_ar4 / 25 * 28)
+```
+
+Demonstration emissions in the 1st emissions budget period for comparison (2022-2025):
+
+```{r, echo=FALSE, message=FALSE, warning=F}
+#compare to Demonstration Pathway equivalent emissions
+ghg |>
+  filter(
+    cat0 %in% "Demonstration path",
+    cat1 == "Waste",
+    cat2 == "Waste emissions by gas (ktCO2e)",
+    cat3 == "CH4") |>
+  filter(between(year, ymd("2022-01-01"), ymd("2025-01-01"))) |>
+  summarise(across(c(ktco2e), sum)) |>
+  rename(emissions_ar4 = ktco2e) |>
+  mutate(emissions_ar5 = emissions_ar4 / 25 * 28)
+
+#Emissions in CPR with project still higher than Demonstration pathway in
+#1st commitment period
+```
+
+The Demonstration pathway has lower waste methane emissions than the Current Policy Sceneraio with project for the first budget period - both using GWPs from IPCC AR4 as well as AR5.
